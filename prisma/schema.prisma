@@ -1,0 +1,1842 @@
+// AutoVault — car importation escrow marketplace
+// Monetary amounts: Decimal(18,2). FX rates: Decimal(18,8). Percentages: Decimal(9,4).
+// Never use Float for money. Timestamps are stored in UTC (timestamptz).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Identity & access ─────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  LOCKED
+  SUSPENDED
+  DELETED
+}
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  emailVerifiedAt   DateTime?  @db.Timestamptz
+  passwordHash      String
+  fullName          String
+  phone             String?
+  status            UserStatus @default(ACTIVE)
+  timezone          String     @default("Africa/Lagos")
+  mfaEnabled        Boolean    @default(false)
+  mfaSecretEnc      String?
+  failedLoginCount  Int        @default(0)
+  lockedUntil       DateTime?  @db.Timestamptz
+  lastLoginAt       DateTime?  @db.Timestamptz
+  isDemo            Boolean    @default(false)
+  createdAt         DateTime   @default(now()) @db.Timestamptz
+  updatedAt         DateTime   @updatedAt @db.Timestamptz
+
+  roles               UserRole[]
+  sessions            Session[]
+  passwordResets      PasswordResetToken[]
+  buyerProfile        BuyerProfile?
+  dealerMemberships   DealerMember[]
+  savedVehicles       SavedVehicle[]
+  sourcingRequests    SourcingRequest[]
+  quotes              Quote[]
+  orders              Order[]              @relation("OrderBuyer")
+  notifications       Notification[]
+  disputesRaised      Dispute[]            @relation("DisputeRaisedBy")
+  supportConversations SupportConversation[] @relation("SupportCreatedBy")
+  shipmentAssignments ShipmentAssignment[]
+  inquiries           Inquiry[]
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  tokenHash   String    @unique
+  mfaVerified Boolean   @default(false)
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  lastSeenAt  DateTime  @default(now()) @db.Timestamptz
+  expiresAt   DateTime  @db.Timestamptz
+  revokedAt   DateTime? @db.Timestamptz
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz
+  usedAt    DateTime? @db.Timestamptz
+  requestIp String?
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  name        String
+  description String
+  privileged  Boolean          @default(false)
+  permissions RolePermission[]
+  users       UserRole[]
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId    String
+  roleId    String
+  grantedAt DateTime @default(now()) @db.Timestamptz
+  grantedBy String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+enum IdentityStatus {
+  NOT_STARTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model BuyerProfile {
+  id                 String         @id @default(cuid())
+  userId             String         @unique
+  addressLine        String?
+  city               String?
+  state              String?
+  identityStatus     IdentityStatus @default(NOT_STARTED)
+  identityType       String?
+  identityNumberEnc  String?
+  identityDocumentId String?
+  identityReviewedAt DateTime?      @db.Timestamptz
+  identityReviewedBy String?
+  updatedAt          DateTime       @updatedAt @db.Timestamptz
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Dealers ─────────────────────────────
+
+enum DealerStatus {
+  APPLICATION_SUBMITTED
+  UNDER_REVIEW
+  ADDITIONAL_INFO_REQUIRED
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+model DealerOrganization {
+  id                   String       @id @default(cuid())
+  slug                 String       @unique
+  legalName            String
+  tradingName          String
+  registrationNumber   String?
+  taxId                String?
+  businessAddress      String
+  city                 String
+  state                String?
+  country              String       @default("NG")
+  phone                String
+  email                String
+  website              String?
+  bio                  String?
+  sourcingRelationships String?
+  tradingHistory       String?
+  status               DealerStatus @default(APPLICATION_SUBMITTED)
+  approvedAt           DateTime?    @db.Timestamptz
+  suspendedAt          DateTime?    @db.Timestamptz
+  bankName             String?
+  bankAccountName      String?
+  bankAccountNumberEnc String?
+  bankAccountLast4     String?
+  bankAccountVerified  Boolean      @default(false)
+  isDemo               Boolean      @default(false)
+  createdAt            DateTime     @default(now()) @db.Timestamptz
+  updatedAt            DateTime     @updatedAt @db.Timestamptz
+
+  members        DealerMember[]
+  verifications  DealerVerification[]
+  checks         DealerVerificationCheck[]
+  listings       VehicleListing[]
+  orders         Order[]
+  agreements     DealerCommercialAgreement[]
+  sourcingOffers SourcingOffer[]
+  payouts        Payout[]
+  inquiries      Inquiry[]
+}
+
+enum DealerMemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+model DealerMember {
+  id        String           @id @default(cuid())
+  orgId     String
+  userId    String
+  role      DealerMemberRole @default(STAFF)
+  isAuthorizedRepresentative Boolean @default(false)
+  createdAt DateTime         @default(now()) @db.Timestamptz
+  org       DealerOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+// Append-only history of verification status decisions.
+model DealerVerification {
+  id          String       @id @default(cuid())
+  orgId       String
+  status      DealerStatus
+  notes       String?
+  requestedInfo String?
+  reviewerId  String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz
+  org         DealerOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+}
+
+enum VerificationCheckType {
+  IDENTITY
+  BUSINESS_REGISTRATION
+  BUSINESS_ADDRESS
+  BANK_ACCOUNT_OWNERSHIP
+  LICENSE_OR_AUTHORIZATION
+  TRADING_HISTORY
+  SUPPLIER_RELATIONSHIPS
+}
+
+enum CheckStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  PASSED
+  FAILED
+  WAIVED
+}
+
+model DealerVerificationCheck {
+  id          String                @id @default(cuid())
+  orgId       String
+  checkType   VerificationCheckType
+  status      CheckStatus           @default(NOT_SUBMITTED)
+  documentId  String?
+  notes       String?
+  reviewedById String?
+  reviewedAt  DateTime?             @db.Timestamptz
+  org         DealerOrganization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, checkType])
+}
+
+model DealerCommercialAgreement {
+  id                String   @id @default(cuid())
+  orgId             String
+  commissionPercent Decimal  @db.Decimal(9, 4)
+  fixedFeePerSale   Decimal  @default(0) @db.Decimal(18, 2)
+  feeCurrency       String   @default("NGN") @db.Char(3)
+  subscriptionPlan  String?
+  notes             String?
+  effectiveFrom     DateTime @db.Timestamptz
+  effectiveTo       DateTime? @db.Timestamptz
+  createdById       String?
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  org               DealerOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, effectiveFrom])
+}
+
+// ───────────────────────────── Inventory ─────────────────────────────
+
+enum SupplierType {
+  AUCTION
+  DEALERSHIP
+  EXPORTER
+  PRIVATE_SELLER
+  OTHER
+}
+
+model Supplier {
+  id        String       @id @default(cuid())
+  name      String
+  type      SupplierType
+  country   String       @db.Char(2)
+  city      String?
+  contact   String?
+  notes     String?
+  isDemo    Boolean      @default(false)
+  createdAt DateTime     @default(now()) @db.Timestamptz
+  listings  VehicleListing[]
+}
+
+enum SupplyChannel {
+  PLATFORM_OWNED
+  DEALER
+  CUSTOMER_SOURCING
+}
+
+// What kind of listing this is — determines which availability statuses are selectable.
+enum ListingType {
+  OVERSEAS_AUCTION
+  OVERSEAS_SUPPLIER_STOCK
+  PURCHASED_OVERSEAS
+  IN_TRANSIT
+  IN_NIGERIA
+}
+
+enum Availability {
+  AVAILABLE_FOR_PURCHASE
+  PURCHASED_AWAITING_EXPORT
+  PURCHASED_AWAITING_SHIPMENT
+  SHIPPED_IN_TRANSIT
+  ARRIVED_AWAITING_CLEARANCE
+  AVAILABLE_LOCAL_DELIVERY
+  RESERVED
+  SOLD
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  CHANGES_REQUESTED
+  PUBLISHED
+  REJECTED
+  SUSPENDED
+  EXPIRED
+  SOLD
+  ARCHIVED
+}
+
+enum ShippingMethod {
+  RORO
+  CONTAINER
+  AIR
+  LOCAL_ONLY
+}
+
+enum VinVisibility {
+  PUBLIC
+  MASKED
+  BUYERS_WITH_ORDER
+}
+
+model VehicleListing {
+  id              String         @id @default(cuid())
+  publicRef       String         @unique
+  slug            String         @unique
+  supplyChannel   SupplyChannel
+  listingType     ListingType
+  availability    Availability
+  status          ListingStatus  @default(DRAFT)
+  dealerOrgId     String?
+  supplierId      String?
+  createdById     String
+  title           String
+  make            String
+  model           String
+  year            Int
+  trim            String?
+  bodyStyle       String
+  vin             String?
+  vinVisibility   VinVisibility  @default(MASKED)
+  mileage         Int
+  mileageUnit     String         @default("km")
+  conditionGrade  String?
+  conditionSummary String
+  damageDisclosure String?
+  previousUse     String?
+  ownershipInfo   String?
+  knownDefects    String?
+  requiredRepairs String?
+  sourceName      String?
+  sourceCountry   String         @db.Char(2)
+  currentLocation String
+  originPort      String?
+  price           Decimal        @db.Decimal(18, 2)
+  priceCurrency   String         @db.Char(3)
+  dealerFee       Decimal        @default(0) @db.Decimal(18, 2)
+  shippingMethod  ShippingMethod @default(RORO)
+  shipmentWindowStart DateTime?  @db.Timestamptz
+  shipmentWindowEnd   DateTime?  @db.Timestamptz
+  estArrivalStart DateTime?      @db.Timestamptz
+  estArrivalEnd   DateTime?      @db.Timestamptz
+  inspectedAt     DateTime?      @db.Timestamptz
+  // Auction disclosures
+  auctionLotNumber String?
+  auctionDate      DateTime?     @db.Timestamptz
+  auctionFeeEstimate Decimal?    @db.Decimal(18, 2)
+  storageDeadline  DateTime?     @db.Timestamptz
+  biddingNotes     String?
+  // Terms
+  cancellationTerms String?
+  warrantyText    String?
+  disclaimer      String?
+  featured        Boolean        @default(false)
+  featuredUntil   DateTime?      @db.Timestamptz
+  viewCount       Int            @default(0)
+  publishedAt     DateTime?      @db.Timestamptz
+  expiresAt       DateTime?      @db.Timestamptz
+  moderationNotes String?
+  duplicateOfId   String?
+  isDemo          Boolean        @default(false)
+  createdAt       DateTime       @default(now()) @db.Timestamptz
+  updatedAt       DateTime       @updatedAt @db.Timestamptz
+
+  dealerOrg     DealerOrganization? @relation(fields: [dealerOrgId], references: [id])
+  supplier      Supplier?           @relation(fields: [supplierId], references: [id])
+  spec          VehicleSpecification?
+  media         VehicleMedia[]
+  inspections   VehicleInspection[]
+  history       VehicleHistoryDisclosure[]
+  facts         VehicleFactVerification[]
+  savedBy       SavedVehicle[]
+  quotes        Quote[]
+  orders        Order[]
+  inquiries     Inquiry[]
+  flags         ListingFlag[]
+
+  @@index([status, availability])
+  @@index([make, model, year])
+  @@index([dealerOrgId])
+  @@index([sourceCountry])
+  @@index([vin])
+}
+
+model VehicleSpecification {
+  id             String @id @default(cuid())
+  listingId      String @unique
+  engineCapacityCc Int?
+  fuelType       String
+  transmission   String
+  drivetrain     String?
+  steering       String @default("LHD")
+  exteriorColor  String?
+  interiorColor  String?
+  doors          Int?
+  seats          Int?
+  extras         String?
+  listing        VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+enum MediaKind {
+  PHOTO
+  VIDEO
+}
+
+model VehicleMedia {
+  id        String    @id @default(cuid())
+  listingId String
+  kind      MediaKind
+  url       String
+  caption   String?
+  sortOrder Int       @default(0)
+  isDemo    Boolean   @default(false)
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  listing   VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, sortOrder])
+}
+
+enum InspectorType {
+  INDEPENDENT
+  PLATFORM
+  DEALER
+  AUCTION_HOUSE
+}
+
+model VehicleInspection {
+  id             String        @id @default(cuid())
+  listingId      String
+  orderId        String?
+  inspectorName  String
+  inspectorType  InspectorType
+  grade          String?
+  summary        String
+  passed         Boolean?
+  reportDocumentId String?
+  inspectedAt    DateTime      @db.Timestamptz
+  platformReviewed Boolean     @default(false)
+  reviewedById   String?
+  recordedById   String
+  isDemo         Boolean       @default(false)
+  createdAt      DateTime      @default(now()) @db.Timestamptz
+  listing        VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+enum Provenance {
+  PLATFORM_VERIFIED
+  INDEPENDENT_REPORT
+  DEALER_DECLARED
+  ESTIMATE
+}
+
+model VehicleHistoryDisclosure {
+  id          String     @id @default(cuid())
+  listingId   String
+  kind        String
+  description String
+  provenance  Provenance @default(DEALER_DECLARED)
+  documentId  String?
+  createdAt   DateTime   @default(now()) @db.Timestamptz
+  listing     VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+// Records which listing facts were independently substantiated and by what evidence.
+model VehicleFactVerification {
+  id          String     @id @default(cuid())
+  listingId   String
+  field       String
+  provenance  Provenance
+  documentId  String?
+  verifiedById String?
+  verifiedAt  DateTime   @default(now()) @db.Timestamptz
+  notes       String?
+  listing     VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, field])
+}
+
+model SavedVehicle {
+  userId    String
+  listingId String
+  createdAt DateTime @default(now()) @db.Timestamptz
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing   VehicleListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@id([userId, listingId])
+}
+
+enum InquiryStatus {
+  OPEN
+  RESPONDED
+  CLOSED
+}
+
+model Inquiry {
+  id          String        @id @default(cuid())
+  listingId   String
+  buyerId     String
+  dealerOrgId String?
+  message     String
+  response    String?
+  respondedById String?
+  respondedAt DateTime?     @db.Timestamptz
+  status      InquiryStatus @default(OPEN)
+  createdAt   DateTime      @default(now()) @db.Timestamptz
+  listing     VehicleListing      @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer       User                @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  dealerOrg   DealerOrganization? @relation(fields: [dealerOrgId], references: [id])
+
+  @@index([dealerOrgId, status])
+}
+
+enum FlagKind {
+  FRAUD_REPORT
+  DUPLICATE_SUSPECTED
+  SUSPICIOUS_ACTIVITY
+  PRICE_ANOMALY
+  MISLEADING_INFORMATION
+}
+
+enum FlagStatus {
+  OPEN
+  INVESTIGATING
+  ACTIONED
+  DISMISSED
+}
+
+model ListingFlag {
+  id          String     @id @default(cuid())
+  kind        FlagKind
+  listingId   String?
+  dealerOrgId String?
+  reporterId  String?
+  details     String
+  status      FlagStatus @default(OPEN)
+  resolvedById String?
+  resolution  String?
+  createdAt   DateTime   @default(now()) @db.Timestamptz
+  listing     VehicleListing? @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+// ───────────────────────────── Documents ─────────────────────────────
+
+enum DocumentVisibility {
+  INTERNAL
+  BUYER_AND_INTERNAL
+  DEALER_AND_INTERNAL
+  ORDER_PARTIES
+  PUBLIC_LISTING
+}
+
+enum DocumentReviewStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model Document {
+  id           String               @id @default(cuid())
+  category     String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+  storageKey   String               @unique
+  visibility   DocumentVisibility   @default(INTERNAL)
+  reviewStatus DocumentReviewStatus @default(PENDING)
+  reviewedById String?
+  reviewNotes  String?
+  uploadedById String
+  listingId    String?
+  orderId      String?
+  shipmentId   String?
+  dealerOrgId  String?
+  disputeId    String?
+  isDemo       Boolean              @default(false)
+  createdAt    DateTime             @default(now()) @db.Timestamptz
+
+  @@index([orderId])
+  @@index([listingId])
+  @@index([dealerOrgId])
+}
+
+// ───────────────────────────── Sourcing ─────────────────────────────
+
+enum SourcingStatus {
+  OPEN
+  OFFERS_RECEIVED
+  OFFER_ACCEPTED
+  CLOSED
+  CANCELLED
+}
+
+model SourcingRequest {
+  id            String         @id @default(cuid())
+  reference     String         @unique
+  userId        String?
+  contactName   String
+  contactEmail  String
+  contactPhone  String?
+  make          String
+  model         String
+  yearMin       Int
+  yearMax       Int
+  trim          String?
+  maxMileage    Int?
+  budgetMax     Decimal        @db.Decimal(18, 2)
+  budgetCurrency String        @default("NGN") @db.Char(3)
+  preferredCountries String[]
+  fuelType      String?
+  transmission  String?
+  notes         String?
+  status        SourcingStatus @default(OPEN)
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  user          User?          @relation(fields: [userId], references: [id])
+  offers        SourcingOffer[]
+
+  @@index([status])
+}
+
+enum OfferStatus {
+  SUBMITTED
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+  EXPIRED
+}
+
+model SourcingOffer {
+  id             String      @id @default(cuid())
+  requestId      String
+  dealerOrgId    String?
+  submittedById  String
+  vehicleDescription String
+  year           Int
+  mileage        Int?
+  sourceCountry  String      @db.Char(2)
+  vehiclePrice   Decimal     @db.Decimal(18, 2)
+  vehicleCurrency String     @db.Char(3)
+  engineCapacityCc Int?
+  shippingMethod ShippingMethod @default(RORO)
+  timelineNotes  String
+  conditionNotes String?
+  validUntil     DateTime    @db.Timestamptz
+  status         OfferStatus @default(SUBMITTED)
+  listingId      String?
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+  request        SourcingRequest     @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  dealerOrg      DealerOrganization? @relation(fields: [dealerOrgId], references: [id])
+  quotes         Quote[]
+}
+
+// ───────────────────────────── Pricing ─────────────────────────────
+
+enum ChargeNature {
+  FIXED
+  QUOTED
+  ESTIMATED
+  VARIABLE
+}
+
+enum CalcType {
+  FIXED_AMOUNT
+  PERCENT_OF_VEHICLE
+  PERCENT_OF_CIF
+  PERCENT_OF_DUTIABLE
+  PERCENT_OF_SUBTOTAL
+}
+
+enum Beneficiary {
+  SELLER
+  DEALER
+  PLATFORM
+  AUCTION_HOUSE
+  SHIPPING_PROVIDER
+  INSURER
+  PORT_TERMINAL
+  GOVERNMENT
+  CLEARING_AGENT
+  LOCAL_TRANSPORTER
+  PAYMENT_PROCESSOR
+  CONTINGENCY_RESERVE
+}
+
+enum PayableStage {
+  UPFRONT
+  ON_ARRIVAL
+  ON_DELIVERY
+}
+
+// Configurable, dated pricing rules. Government charges MUST carry a source reference and be
+// verified by an administrator against current official publications before use in live quotes.
+model PricingRule {
+  id            String       @id @default(cuid())
+  code          String
+  version       Int          @default(1)
+  label         String
+  category      String
+  calcType      CalcType
+  amount        Decimal?     @db.Decimal(18, 2)
+  currency      String?      @db.Char(3)
+  percent       Decimal?     @db.Decimal(9, 4)
+  conditions    Json         @default("{}")
+  nature        ChargeNature
+  refundable    Boolean      @default(false)
+  beneficiary   Beneficiary
+  payableStage  PayableStage @default(UPFRONT)
+  uncertaintyPercent Decimal @default(0) @db.Decimal(9, 4)
+  sourceReference String
+  verifiedAt    DateTime?    @db.Timestamptz
+  verifiedById  String?
+  optional      Boolean      @default(false)
+  sortOrder     Int          @default(0)
+  effectiveFrom DateTime     @db.Timestamptz
+  effectiveTo   DateTime?    @db.Timestamptz
+  active        Boolean      @default(true)
+  isDemo        Boolean      @default(false)
+  createdById   String?
+  createdAt     DateTime     @default(now()) @db.Timestamptz
+
+  @@unique([code, version])
+  @@index([active, effectiveFrom])
+}
+
+model ExchangeRateSnapshot {
+  id         String   @id @default(cuid())
+  base       String   @db.Char(3)
+  quote      String   @db.Char(3)
+  rate       Decimal  @db.Decimal(18, 8)
+  source     String
+  capturedAt DateTime @db.Timestamptz
+  isDemo     Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([base, quote, capturedAt])
+}
+
+enum QuoteType {
+  FIXED_PRICE
+  ESTIMATED_LANDED_COST
+  SOURCING
+}
+
+enum QuoteStatus {
+  ISSUED
+  ACCEPTED
+  EXPIRED
+  SUPERSEDED
+  CANCELLED
+}
+
+model Quote {
+  id             String      @id @default(cuid())
+  quoteNumber    String      @unique
+  type           QuoteType
+  status         QuoteStatus @default(ISSUED)
+  listingId      String?
+  sourcingOfferId String?
+  buyerId        String?
+  currency       String      @default("NGN") @db.Char(3)
+  vehicleSubtotal Decimal    @db.Decimal(18, 2)
+  logisticsSubtotal Decimal  @db.Decimal(18, 2)
+  taxesSubtotal  Decimal     @db.Decimal(18, 2)
+  feesSubtotal   Decimal     @db.Decimal(18, 2)
+  contingency    Decimal     @db.Decimal(18, 2)
+  totalEstimate  Decimal     @db.Decimal(18, 2)
+  lowEstimate    Decimal     @db.Decimal(18, 2)
+  highEstimate   Decimal     @db.Decimal(18, 2)
+  payableNow     Decimal     @db.Decimal(18, 2)
+  payableLater   Decimal     @db.Decimal(18, 2)
+  fxSnapshotId   String?
+  fxRate         Decimal?    @db.Decimal(18, 8)
+  deliveryLocation String    @default("LAGOS")
+  etaMinDays     Int
+  etaMaxDays     Int
+  assumptions    String[]
+  exclusions     String[]
+  usesUnverifiedRules Boolean @default(false)
+  validUntil     DateTime    @db.Timestamptz
+  termsVersion   String
+  acceptedAt     DateTime?   @db.Timestamptz
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+  listing        VehicleListing? @relation(fields: [listingId], references: [id])
+  sourcingOffer  SourcingOffer?  @relation(fields: [sourcingOfferId], references: [id])
+  buyer          User?           @relation(fields: [buyerId], references: [id])
+  lineItems      QuoteLineItem[]
+  order          Order?
+
+  @@index([buyerId])
+  @@index([listingId])
+}
+
+model QuoteLineItem {
+  id              String       @id @default(cuid())
+  quoteId         String
+  code            String
+  label           String
+  category        String
+  amount          Decimal      @db.Decimal(18, 2)
+  lowAmount       Decimal      @db.Decimal(18, 2)
+  highAmount      Decimal      @db.Decimal(18, 2)
+  currency        String       @db.Char(3)
+  originalAmount  Decimal?     @db.Decimal(18, 2)
+  originalCurrency String?     @db.Char(3)
+  nature          ChargeNature
+  calculation     String
+  ruleId          String?
+  ruleVersion     Int?
+  ruleVerified    Boolean      @default(true)
+  applicableDate  DateTime     @db.Timestamptz
+  payableStage    PayableStage
+  refundable      Boolean
+  beneficiary     Beneficiary
+  optional        Boolean      @default(false)
+  sortOrder       Int          @default(0)
+  quote           Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+}
+
+// ───────────────────────────── Orders ─────────────────────────────
+
+enum OrderPath {
+  SOURCE_AND_IMPORT
+  AUCTION_PURCHASE
+  PURCHASED_STOCK
+  IN_TRANSIT_STOCK
+  LOCAL_STOCK
+}
+
+enum OrderState {
+  ORDER_CREATED
+  COMPLIANCE_CHECK
+  AWAITING_PAYMENT
+  FUNDS_CONFIRMED
+  FUNDS_PROTECTED
+  PURCHASE_AUTHORIZED
+  PURCHASE_COMPLETED
+  INSPECTION_COMPLETED
+  EXPORT_PREPARATION
+  SHIPMENT_BOOKED
+  DEPARTED
+  IN_TRANSIT
+  ARRIVED_NIGERIA
+  CUSTOMS_CLEARANCE
+  RELEASED_FROM_PORT
+  LOCAL_TRANSPORT
+  READY_FOR_HANDOVER
+  DELIVERED
+  ACCEPTANCE_PERIOD
+  ACCEPTED
+  SETTLEMENT
+  COMPLETED
+  PURCHASE_FAILED
+  INSPECTION_FAILED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id             String     @id @default(cuid())
+  orderNumber    String     @unique
+  buyerId        String
+  quoteId        String     @unique
+  listingId      String?
+  dealerOrgId    String?
+  path           OrderPath
+  state          OrderState @default(ORDER_CREATED)
+  stateVersion   Int        @default(0)
+  currency       String     @db.Char(3)
+  agreedTotal    Decimal    @db.Decimal(18, 2)
+  payableNow     Decimal    @db.Decimal(18, 2)
+  paymentArrangement String // e.g. SANDBOX_DEMO, MANUAL_PILOT, PROVIDER_LIVE
+  inspectionPeriodHours Int @default(72)
+  acceptanceDeadline DateTime? @db.Timestamptz
+  cancelledReason String?
+  isDemo         Boolean    @default(false)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
+
+  buyer          User                @relation("OrderBuyer", fields: [buyerId], references: [id])
+  quote          Quote               @relation(fields: [quoteId], references: [id])
+  listing        VehicleListing?     @relation(fields: [listingId], references: [id])
+  dealerOrg      DealerOrganization? @relation(fields: [dealerOrgId], references: [id])
+  transitions    OrderTransition[]
+  contract       Contract?
+  paymentIntents PaymentIntent[]
+  escrow         EscrowReference?
+  refunds        Refund[]
+  settlements    SettlementInstruction[]
+  shipment       Shipment?
+  costAdjustments CostAdjustment[]
+  delivery       DeliveryRecord?
+  disputes       Dispute[]
+  complianceChecks ComplianceCheck[]
+
+  @@index([buyerId])
+  @@index([dealerOrgId])
+  @@index([state])
+}
+
+// Immutable: enforced by database trigger (see migration).
+model OrderTransition {
+  id          String     @id @default(cuid())
+  orderId     String
+  sequence    Int
+  fromState   OrderState?
+  toState     OrderState
+  actorId     String?
+  actorRole   String
+  description String
+  evidenceDocumentIds String[]
+  metadata    Json       @default("{}")
+  createdAt   DateTime   @default(now()) @db.Timestamptz
+  order       Order      @relation(fields: [orderId], references: [id])
+
+  @@unique([orderId, sequence])
+}
+
+model Contract {
+  id                 String   @id @default(cuid())
+  orderId            String   @unique
+  termsVersion       String
+  content            String
+  contentSha256      String
+  settlementSchedule Json
+  inspectionPeriodHours Int
+  acceptedById       String
+  acceptedAt         DateTime @db.Timestamptz
+  acceptedIp         String?
+  acceptedUserAgent  String?
+  order              Order    @relation(fields: [orderId], references: [id])
+}
+
+enum ComplianceCheckType {
+  IDENTITY
+  SANCTIONS_SCREENING
+  SOURCE_OF_FUNDS
+  ENHANCED_DUE_DILIGENCE
+}
+
+enum ComplianceStatus {
+  REQUIRED
+  PASSED
+  FAILED
+  WAIVED
+}
+
+model ComplianceCheck {
+  id        String              @id @default(cuid())
+  orderId   String
+  type      ComplianceCheckType
+  status    ComplianceStatus    @default(REQUIRED)
+  reason    String
+  reviewedById String?
+  reviewedAt DateTime?          @db.Timestamptz
+  notes     String?
+  createdAt DateTime            @default(now()) @db.Timestamptz
+  order     Order               @relation(fields: [orderId], references: [id])
+
+  @@unique([orderId, type])
+}
+
+// ───────────────────────────── Payments & ledger ─────────────────────────────
+
+enum PaymentProviderKey {
+  SANDBOX
+  MANUAL_PILOT
+  LIVE_PARTNER
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CARD
+  OTHER
+}
+
+enum PaymentIntentStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  PARTIALLY_PAID
+  FAILED
+  EXPIRED
+  REVERSED
+  DISPUTED
+}
+
+enum PaymentPurpose {
+  ORDER_PAYMENT
+  ADDITIONAL_COST
+}
+
+model PaymentIntent {
+  id           String              @id @default(cuid())
+  orderId      String
+  reference    String              @unique
+  provider     PaymentProviderKey
+  method       PaymentMethod
+  purpose      PaymentPurpose      @default(ORDER_PAYMENT)
+  costAdjustmentId String?
+  amount       Decimal             @db.Decimal(18, 2)
+  amountReceived Decimal           @default(0) @db.Decimal(18, 2)
+  currency     String              @db.Char(3)
+  status       PaymentIntentStatus @default(CREATED)
+  providerRef  String?
+  instructions Json                @default("{}")
+  expiresAt    DateTime            @db.Timestamptz
+  createdAt    DateTime            @default(now()) @db.Timestamptz
+  updatedAt    DateTime            @updatedAt @db.Timestamptz
+  order        Order               @relation(fields: [orderId], references: [id])
+  transactions ProviderTransaction[]
+  buyerProofs  BuyerPaymentProof[]
+
+  @@index([orderId])
+}
+
+// Buyer-uploaded transfer receipts. NEVER conclusive proof of payment — only a prompt for finance review.
+model BuyerPaymentProof {
+  id              String   @id @default(cuid())
+  paymentIntentId String
+  documentId      String
+  note            String?
+  createdAt       DateTime @default(now()) @db.Timestamptz
+  paymentIntent   PaymentIntent @relation(fields: [paymentIntentId], references: [id])
+}
+
+enum ProviderTxnType {
+  COLLECTION
+  REFUND
+  PAYOUT
+  REVERSAL
+  CHARGEBACK
+}
+
+enum ProviderTxnStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REVERSED
+}
+
+enum ReconciliationStatus {
+  UNRECONCILED
+  MATCHED
+  MISMATCHED
+  MISSING_INTERNAL
+}
+
+model ProviderTransaction {
+  id              String               @id @default(cuid())
+  provider        PaymentProviderKey
+  providerTxnId   String
+  type            ProviderTxnType
+  status          ProviderTxnStatus
+  amount          Decimal              @db.Decimal(18, 2)
+  fee             Decimal              @default(0) @db.Decimal(18, 2)
+  currency        String               @db.Char(3)
+  reference       String
+  paymentIntentId String?
+  webhookEventId  String?
+  occurredAt      DateTime             @db.Timestamptz
+  reconciliation  ReconciliationStatus @default(UNRECONCILED)
+  reconciledAt    DateTime?            @db.Timestamptz
+  // Manual pilot confirmations: two different finance users must record & approve.
+  recordedById    String?
+  approvedById    String?
+  bankStatementRef String?
+  isDemo          Boolean              @default(false)
+  createdAt       DateTime             @default(now()) @db.Timestamptz
+  paymentIntent   PaymentIntent?       @relation(fields: [paymentIntentId], references: [id])
+
+  @@unique([provider, providerTxnId])
+  @@index([reference])
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  REJECTED
+  FAILED
+}
+
+model WebhookEvent {
+  id            String        @id @default(cuid())
+  provider      String
+  eventId       String
+  eventType     String
+  payload       Json
+  signatureValid Boolean
+  status        WebhookStatus @default(RECEIVED)
+  error         String?
+  attempts      Int           @default(1)
+  receivedAt    DateTime      @default(now()) @db.Timestamptz
+  processedAt   DateTime?     @db.Timestamptz
+
+  @@unique([provider, eventId])
+}
+
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  scope       String
+  key         String
+  requestHash String
+  response    Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  @@unique([scope, key])
+}
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+  EQUITY
+}
+
+model LedgerAccount {
+  id        String            @id @default(cuid())
+  code      String            @unique
+  name      String
+  type      LedgerAccountType
+  currency  String            @db.Char(3)
+  orderId   String?
+  dealerOrgId String?
+  createdAt DateTime          @default(now()) @db.Timestamptz
+  entries   LedgerEntry[]
+
+  @@index([orderId])
+}
+
+// Immutable. Balanced per currency (deferred constraint trigger). Corrections via reversal transactions.
+model LedgerTransaction {
+  id           String   @id @default(cuid())
+  reference    String   @unique
+  kind         String
+  description  String
+  orderId      String?
+  reversalOfId String?  @unique
+  createdById  String?
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  entries      LedgerEntry[]
+  reversalOf   LedgerTransaction? @relation("Reversal", fields: [reversalOfId], references: [id])
+  reversedBy   LedgerTransaction? @relation("Reversal")
+
+  @@index([orderId])
+}
+
+enum EntryDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerEntry {
+  id            String         @id @default(cuid())
+  transactionId String
+  accountId     String
+  direction     EntryDirection
+  amount        Decimal        @db.Decimal(18, 2)
+  currency      String         @db.Char(3)
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id])
+  account       LedgerAccount     @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([transactionId])
+}
+
+enum EscrowStatus {
+  NOT_ESTABLISHED
+  SANDBOX_SIMULATED
+  MANUAL_PILOT_ACCOUNT
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+model EscrowReference {
+  id                String       @id @default(cuid())
+  orderId           String       @unique
+  provider          PaymentProviderKey
+  externalReference String?
+  status            EscrowStatus @default(NOT_ESTABLISHED)
+  frozenReason      String?
+  notes             String?
+  createdAt         DateTime     @default(now()) @db.Timestamptz
+  updatedAt         DateTime     @updatedAt @db.Timestamptz
+  order             Order        @relation(fields: [orderId], references: [id])
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  orderId       String
+  amount        Decimal      @db.Decimal(18, 2)
+  currency      String       @db.Char(3)
+  reason        String
+  disputeId     String?
+  status        RefundStatus @default(REQUESTED)
+  requestedById String
+  approvedById  String?
+  approvedAt    DateTime?    @db.Timestamptz
+  providerTxnId String?
+  ledgerTxnId   String?
+  failureReason String?
+  createdAt     DateTime     @default(now()) @db.Timestamptz
+  updatedAt     DateTime     @updatedAt @db.Timestamptz
+  order         Order        @relation(fields: [orderId], references: [id])
+
+  @@index([status])
+}
+
+enum SettlementMilestone {
+  PURCHASE_VERIFIED
+  VEHICLE_DEPARTED
+  ARRIVED_NIGERIA
+  BUYER_ACCEPTED
+}
+
+enum SettlementStatus {
+  SCHEDULED
+  ELIGIBLE
+  APPROVAL_REQUESTED
+  RELEASED
+  BLOCKED_BY_DISPUTE
+  CANCELLED
+}
+
+model SettlementInstruction {
+  id            String              @id @default(cuid())
+  orderId       String
+  milestone     SettlementMilestone
+  beneficiary   Beneficiary
+  dealerOrgId   String?
+  description   String
+  amount        Decimal             @db.Decimal(18, 2)
+  currency      String              @db.Char(3)
+  status        SettlementStatus    @default(SCHEDULED)
+  eligibleAt    DateTime?           @db.Timestamptz
+  requestedById String?
+  requestedAt   DateTime?           @db.Timestamptz
+  approvedById  String?
+  releasedAt    DateTime?           @db.Timestamptz
+  ledgerTxnId   String?
+  providerTxnId String?
+  createdAt     DateTime            @default(now()) @db.Timestamptz
+  order         Order               @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, status])
+}
+
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  PAID
+  REJECTED
+}
+
+model Payout {
+  id           String       @id @default(cuid())
+  dealerOrgId  String
+  amount       Decimal      @db.Decimal(18, 2)
+  currency     String       @db.Char(3)
+  status       PayoutStatus @default(REQUESTED)
+  requestedById String
+  reviewedById String?
+  notes        String?
+  providerTxnId String?
+  ledgerTxnId  String?
+  createdAt    DateTime     @default(now()) @db.Timestamptz
+  dealerOrg    DealerOrganization @relation(fields: [dealerOrgId], references: [id])
+}
+
+model ReconciliationRun {
+  id          String   @id @default(cuid())
+  provider    PaymentProviderKey
+  periodStart DateTime @db.Timestamptz
+  periodEnd   DateTime @db.Timestamptz
+  matched     Int
+  mismatched  Int
+  missingInternal Int
+  ledgerBalanced Boolean
+  report      Json
+  createdById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz
+}
+
+// ───────────────────────────── Logistics ─────────────────────────────
+
+enum ProviderKind {
+  OCEAN_CARRIER
+  FREIGHT_FORWARDER
+  CLEARING_AGENT
+  LOCAL_TRANSPORTER
+  INSPECTION_AGENCY
+}
+
+enum IntegrationMode {
+  MANUAL_ONLY
+  SANDBOX
+  LIVE
+}
+
+model ShippingProvider {
+  id          String          @id @default(cuid())
+  name        String
+  kind        ProviderKind
+  integration IntegrationMode @default(MANUAL_ONLY)
+  contact     String?
+  isDemo      Boolean         @default(false)
+  createdAt   DateTime        @default(now()) @db.Timestamptz
+  shipments   Shipment[]
+}
+
+enum ShipmentStatus {
+  PLANNING
+  BOOKED
+  DEPARTED
+  IN_TRANSIT
+  ARRIVED
+  CLEARING
+  RELEASED
+  DELIVERING
+  DELIVERED
+  CANCELLED
+}
+
+model Shipment {
+  id               String         @id @default(cuid())
+  orderId          String         @unique
+  reference        String         @unique
+  method           ShippingMethod
+  providerId       String?
+  bookingRef       String?
+  vesselName       String?
+  voyageNumber     String?
+  containerNumber  String?
+  billOfLading     String?
+  originPort       String?
+  destinationPort  String         @default("Lagos (Apapa / Tin Can)")
+  plannedDeparture DateTime?      @db.Timestamptz
+  actualDeparture  DateTime?      @db.Timestamptz
+  originalEtaStart DateTime?      @db.Timestamptz
+  originalEtaEnd   DateTime?      @db.Timestamptz
+  currentEtaStart  DateTime?      @db.Timestamptz
+  currentEtaEnd    DateTime?      @db.Timestamptz
+  actualArrival    DateTime?      @db.Timestamptz
+  status           ShipmentStatus @default(PLANNING)
+  lastUpdateAt     DateTime?      @db.Timestamptz
+  isDemo           Boolean        @default(false)
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+  order            Order          @relation(fields: [orderId], references: [id])
+  provider         ShippingProvider? @relation(fields: [providerId], references: [id])
+  legs             ShipmentLeg[]
+  events           TrackingEvent[]
+  etaRevisions     EtaRevision[]
+  customs          CustomsRecord?
+  assignments      ShipmentAssignment[]
+}
+
+enum AssignmentRole {
+  LOGISTICS_OPERATOR
+  CLEARING_PARTNER
+  DELIVERY_PARTNER
+}
+
+model ShipmentAssignment {
+  id         String         @id @default(cuid())
+  shipmentId String
+  userId     String
+  role       AssignmentRole
+  createdAt  DateTime       @default(now()) @db.Timestamptz
+  shipment   Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, userId, role])
+  @@index([userId])
+}
+
+model ShipmentLeg {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  sequence    Int
+  mode        String
+  fromPlace   String
+  toPlace     String
+  carrier     String?
+  reference   String?
+  plannedStart DateTime? @db.Timestamptz
+  plannedEnd  DateTime? @db.Timestamptz
+  actualStart DateTime? @db.Timestamptz
+  actualEnd   DateTime? @db.Timestamptz
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, sequence])
+}
+
+enum TrackingSource {
+  MANUAL_VERIFIED
+  PROVIDER_API
+  SANDBOX_SIMULATION
+}
+
+// Immutable (trigger). Corrections are new events referencing correctsEventId.
+model TrackingEvent {
+  id            String         @id @default(cuid())
+  shipmentId    String
+  milestone     String
+  description   String
+  location      String?
+  occurredAt    DateTime       @db.Timestamptz
+  recordedAt    DateTime       @default(now()) @db.Timestamptz
+  recordedById  String?
+  source        TrackingSource
+  evidenceDocumentId String?
+  visibleToBuyer Boolean       @default(true)
+  correctsEventId String?
+  isDemo        Boolean        @default(false)
+  shipment      Shipment       @relation(fields: [shipmentId], references: [id])
+
+  @@index([shipmentId, occurredAt])
+}
+
+model EtaRevision {
+  id            String   @id @default(cuid())
+  shipmentId    String
+  previousStart DateTime? @db.Timestamptz
+  previousEnd   DateTime? @db.Timestamptz
+  newStart      DateTime @db.Timestamptz
+  newEnd        DateTime @db.Timestamptz
+  reason        String
+  supportingInfo String
+  evidenceDocumentId String?
+  createdById   String?
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  shipment      Shipment @relation(fields: [shipmentId], references: [id])
+}
+
+enum CustomsStatus {
+  NOT_STARTED
+  DOCUMENTS_SUBMITTED
+  ASSESSED
+  DUTY_PAID
+  EXAMINATION
+  RELEASED
+  HELD
+}
+
+model CustomsRecord {
+  id              String        @id @default(cuid())
+  shipmentId      String        @unique
+  declarationRef  String?
+  status          CustomsStatus @default(NOT_STARTED)
+  assessedValue   Decimal?      @db.Decimal(18, 2)
+  dutyAmount      Decimal?      @db.Decimal(18, 2)
+  vatAmount       Decimal?      @db.Decimal(18, 2)
+  leviesAmount    Decimal?      @db.Decimal(18, 2)
+  clearingFee     Decimal?      @db.Decimal(18, 2)
+  terminalCharges Decimal?      @db.Decimal(18, 2)
+  currency        String        @default("NGN") @db.Char(3)
+  notes           String?
+  releasedAt      DateTime?     @db.Timestamptz
+  updatedById     String?
+  updatedAt       DateTime      @updatedAt @db.Timestamptz
+  shipment        Shipment      @relation(fields: [shipmentId], references: [id])
+}
+
+enum CostAdjustmentStatus {
+  PENDING_INTERNAL_REVIEW
+  AWAITING_BUYER_APPROVAL
+  APPROVED_BY_BUYER
+  REJECTED_BY_BUYER
+  REJECTED_INTERNALLY
+  CONTRACTUAL_EXCEPTION
+  PAID
+}
+
+model CostAdjustment {
+  id             String               @id @default(cuid())
+  orderId        String
+  code           String
+  label          String
+  amount         Decimal              @db.Decimal(18, 2)
+  currency       String               @db.Char(3)
+  reason         String
+  beneficiary    Beneficiary
+  evidenceDocumentId String?
+  contractualClause String?
+  status         CostAdjustmentStatus @default(PENDING_INTERNAL_REVIEW)
+  submittedById  String
+  reviewedById   String?
+  reviewedAt     DateTime?            @db.Timestamptz
+  buyerDecidedAt DateTime?            @db.Timestamptz
+  createdAt      DateTime             @default(now()) @db.Timestamptz
+  order          Order                @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, status])
+}
+
+model DeliveryRecord {
+  id               String    @id @default(cuid())
+  orderId          String    @unique
+  partnerUserId    String?
+  method           String    @default("HOME_DELIVERY")
+  address          String
+  scheduledFor     DateTime? @db.Timestamptz
+  deliveredAt      DateTime? @db.Timestamptz
+  recipientName    String?
+  odometerReading  Int?
+  evidenceDocumentId String?
+  buyerAcknowledgedAt DateTime? @db.Timestamptz
+  notes            String?
+  updatedAt        DateTime  @updatedAt @db.Timestamptz
+  order            Order     @relation(fields: [orderId], references: [id])
+}
+
+// ───────────────────────────── Disputes & support ─────────────────────────────
+
+enum DisputeCategory {
+  VEHICLE_NOT_PURCHASED
+  INCORRECT_VEHICLE_OR_VIN
+  UNDISCLOSED_DAMAGE
+  MISSING_DOCUMENTATION
+  SHIPPING_DELAY
+  UNEXPECTED_CHARGES
+  VEHICLE_NOT_DELIVERED
+  DELIVERY_CONDITION
+  DEALER_CANCELLATION
+  SUPPLIER_FAILURE
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  AWAITING_RESPONSE
+  UNDER_INVESTIGATION
+  DECISION_ISSUED
+  CLOSED
+  WITHDRAWN
+}
+
+enum DisputeOutcome {
+  FULL_REFUND
+  PARTIAL_REFUND
+  RELEASE_TO_SELLER
+  REMEDIATION
+  NO_ACTION
+}
+
+model Dispute {
+  id            String          @id @default(cuid())
+  reference     String          @unique
+  orderId       String
+  raisedById    String
+  category      DisputeCategory
+  description   String
+  status        DisputeStatus   @default(OPEN)
+  freezesFunds  Boolean         @default(true)
+  responseDueAt DateTime        @db.Timestamptz
+  assignedToId  String?
+  outcome       DisputeOutcome?
+  refundAmount  Decimal?        @db.Decimal(18, 2)
+  decisionNotes String?
+  decidedById   String?
+  decidedAt     DateTime?       @db.Timestamptz
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+  updatedAt     DateTime        @updatedAt @db.Timestamptz
+  order         Order           @relation(fields: [orderId], references: [id])
+  raisedBy      User            @relation("DisputeRaisedBy", fields: [raisedById], references: [id])
+  evidence      DisputeEvidence[]
+
+  @@index([orderId, status])
+}
+
+model DisputeEvidence {
+  id           String   @id @default(cuid())
+  disputeId    String
+  submittedById String
+  partyRole    String
+  note         String
+  documentId   String?
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  dispute      Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING_CUSTOMER
+  ESCALATED
+  RESOLVED
+}
+
+model SupportConversation {
+  id          String             @id @default(cuid())
+  subject     String
+  orderId     String?
+  createdById String
+  assignedToId String?
+  status      ConversationStatus @default(OPEN)
+  priority    String             @default("NORMAL")
+  createdAt   DateTime           @default(now()) @db.Timestamptz
+  updatedAt   DateTime           @updatedAt @db.Timestamptz
+  createdBy   User               @relation("SupportCreatedBy", fields: [createdById], references: [id])
+  messages    SupportMessage[]
+}
+
+model SupportMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  authorId       String
+  body           String
+  internalNote   Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  createdAt DateTime @default(now()) @db.Timestamptz
+}
+
+// ───────────────────────────── Notifications & jobs ─────────────────────────────
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model NotificationTemplate {
+  id        String              @id @default(cuid())
+  key       String
+  channel   NotificationChannel
+  subject   String
+  body      String
+  active    Boolean             @default(true)
+  updatedAt DateTime            @updatedAt @db.Timestamptz
+
+  @@unique([key, channel])
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  userId      String
+  channel     NotificationChannel
+  templateKey String
+  subject     String
+  body        String
+  link        String?
+  dedupeKey   String              @unique
+  status      NotificationStatus  @default(QUEUED)
+  attempts    Int                 @default(0)
+  lastError   String?
+  sentAt      DateTime?           @db.Timestamptz
+  readAt      DateTime?           @db.Timestamptz
+  createdAt   DateTime            @default(now()) @db.Timestamptz
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries  NotificationDelivery[]
+
+  @@index([userId, channel, readAt])
+}
+
+model NotificationDelivery {
+  id             String   @id @default(cuid())
+  notificationId String
+  attempt        Int
+  success        Boolean
+  providerMessageId String?
+  error          String?
+  createdAt      DateTime @default(now()) @db.Timestamptz
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  type        String
+  payload     Json
+  status      JobStatus @default(PENDING)
+  dedupeKey   String?   @unique
+  runAt       DateTime  @default(now()) @db.Timestamptz
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  lastError   String?
+  lockedAt    DateTime? @db.Timestamptz
+  lockedBy    String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+
+  @@index([status, runAt])
+}
+
+// ───────────────────────────── Audit & configuration ─────────────────────────────
+
+// Immutable, hash-chained (trigger forbids UPDATE/DELETE).
+model AuditLog {
+  id         String   @id @default(cuid())
+  seq        BigInt   @default(autoincrement()) @unique
+  actorId    String?
+  actorRoles String[]
+  action     String
+  entityType String
+  entityId   String
+  summary    String
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?
+  prevHash   String
+  hash       String
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([action])
+}
+
+model SystemConfig {
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+}
+
+model SourceCountry {
+  code          String  @id @db.Char(2)
+  name          String
+  active        Boolean @default(true)
+  originPorts   String[]
+  transitDaysMin Int
+  transitDaysMax Int
+  notes         String?
+}
+
+model DeliveryLocation {
+  code     String  @id
+  name     String
+  state    String
+  active   Boolean @default(true)
+  localDeliveryDaysMin Int @default(1)
+  localDeliveryDaysMax Int @default(3)
+}
+
+// SANDBOX ONLY: simulates the external payment/escrow provider's own records so that webhooks,
+// refunds, payouts and reconciliation can be exercised end-to-end without real money.
+model SandboxProviderRecord {
+  id            String          @id @default(cuid())
+  providerTxnId String          @unique
+  type          ProviderTxnType
+  status        ProviderTxnStatus
+  amount        Decimal         @db.Decimal(18, 2)
+  fee           Decimal         @default(0) @db.Decimal(18, 2)
+  currency      String          @db.Char(3)
+  reference     String
+  occurredAt    DateTime        @db.Timestamptz
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+}
