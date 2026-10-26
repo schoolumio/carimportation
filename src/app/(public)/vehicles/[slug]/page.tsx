@@ -31,6 +31,7 @@ export default async function VehiclePage({ params, searchParams }: { params: Pr
   const l = await getPublicListing(slug);
   if (!l) notFound();
   const actor = await currentActor();
+  await prisma.vehicleListing.update({ where: { id: l.id }, data: { viewCount: { increment: 1 } } });
   const selected = ([] as string[]).concat(sp.optional ?? []);
   const options = await optionalServices();
   let estimateError: string | null = null;

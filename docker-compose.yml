@@ -1,0 +1,31 @@
+# Local/staging composition. Do not use the example secrets in production.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: autovault
+      POSTGRES_PASSWORD: autovault
+      POSTGRES_DB: autovault
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U autovault"], interval: 5s, retries: 10 }
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://autovault:autovault@db:5432/autovault
+      STORAGE_DIR: /app/storage/private
+    ports: ["3000:3000"]
+    volumes: [storage:/app/storage]
+    depends_on: { db: { condition: service_healthy } }
+  worker:
+    build: .
+    command: ["npx", "tsx", "scripts/worker.ts"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://autovault:autovault@db:5432/autovault
+      STORAGE_DIR: /app/storage/private
+    volumes: [storage:/app/storage]
+    depends_on: { db: { condition: service_healthy } }
+volumes:
+  dbdata:
+  storage:

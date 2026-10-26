@@ -12,6 +12,7 @@ import { type Actor, requirePermission } from "@/server/auth/actor";
 import { audit } from "@/server/audit/audit";
 import { ACCOUNTS, orderHeldBalance, post } from "@/server/ledger/ledger";
 import { providerFor } from "@/server/payments/registry";
+import { CATEGORY_LABEL, type Category } from "@/server/pricing/calculator";
 import { notify } from "@/server/notifications/notify";
 
 const MILESTONE_ORDER: SettlementMilestone[] = ["PURCHASE_VERIFIED", "VEHICLE_DEPARTED", "ARRIVED_NIGERIA", "BUYER_ACCEPTED"];
@@ -117,7 +118,7 @@ export function buildSettlementPlan(args: {
 }
 
 function labelFor(category: string): string {
-  return category.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  return CATEGORY_LABEL[category as Category] ?? category.toLowerCase().replace(/_/g, " ");
 }
 
 export async function createSettlementInstructions(tx: Tx, orderId: string, currency: string, plan: PlannedInstruction[]) {

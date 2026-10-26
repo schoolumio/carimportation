@@ -54,7 +54,7 @@ export function CostBreakdown({ data, compact = false }: { data: BreakdownData; 
                           {!compact && <Badge>{STAGE_LABEL[l.payableStage]}</Badge>}
                           {!compact && <Badge>{l.refundable ? "Refundable" : "Non-refundable once incurred"}</Badge>}
                           {!l.ruleVerified && <Badge tone="pending" title="Rate not yet verified against an official or contracted source">Unverified rate</Badge>}
-                          {l.paid && <Badge tone="verified">Paid</Badge>}
+                          {l.paid && <Badge tone="verified" title="Collected into protected funds; not yet paid to the beneficiary unless shown as released">Funded</Badge>}
                         </div>
                         {!compact && (
                           <p className="mt-1 text-xs text-slate-500">

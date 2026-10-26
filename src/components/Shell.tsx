@@ -49,7 +49,7 @@ export async function Header() {
           )}
         </div>
       </div>
-      <nav className="container-page flex gap-4 overflow-x-auto pb-2 text-sm font-medium text-slate-700 lg:hidden" aria-label="Main mobile">
+      <nav className="container-page flex gap-4 overflow-x-auto whitespace-nowrap pb-2 text-sm font-medium text-slate-700 lg:hidden" aria-label="Main mobile">
         <Link href="/vehicles">Vehicles</Link><Link href="/calculator">Calculator</Link><Link href="/how-it-works">How it works</Link><Link href="/payment-protection">Protection</Link><Link href="/track">Track</Link>
         {links.map((l) => <Link key={l.href} href={l.href} className="sm:hidden">{l.label}</Link>)}
       </nav>
