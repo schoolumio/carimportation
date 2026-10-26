@@ -79,19 +79,20 @@ export async function applyAsDealer(actor: Actor, raw: z.infer<typeof dealerAppl
   });
 }
 
-/** Public application flow: creates the user account and the application together. */
-export async function registerDealer(input: { fullName: string; email: string; password: string; phone?: string } & z.infer<typeof dealerApplicationSchema>) {
-  const pw = passwordPolicyError(input.password);
+/** Public application flow: creates the user account (representative) and the business application together. */
+export async function registerDealer(account: { fullName: string; email: string; password: string; phone?: string }, business: z.infer<typeof dealerApplicationSchema>) {
+  const pw = passwordPolicyError(account.password);
   if (pw) throw invalid(pw);
-  const email = input.email.trim().toLowerCase();
+  const email = account.email.trim().toLowerCase();
   if (await prisma.user.findUnique({ where: { email } })) throw conflict("An account with this email already exists. Sign in and apply from your account.");
+  dealerApplicationSchema.parse(business); // validate before creating the user
   const buyerRole = await prisma.role.findUniqueOrThrow({ where: { key: "BUYER" } });
   const user = await prisma.user.create({
-    data: { email, fullName: input.fullName.trim(), phone: input.phone || input.phone, passwordHash: await hashPassword(input.password), roles: { create: { roleId: buyerRole.id } }, buyerProfile: { create: {} } },
+    data: { email, fullName: account.fullName.trim(), phone: account.phone || null, passwordHash: await hashPassword(account.password), roles: { create: { roleId: buyerRole.id } }, buyerProfile: { create: {} } },
   });
   const { loadActor } = await import("@/server/auth/actor");
   const actor = (await loadActor(user.id))!;
-  const org = await applyAsDealer(actor, input);
+  const org = await applyAsDealer(actor, business);
   return { user, org };
 }
 
