@@ -15,11 +15,12 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx --env-file=.env prisma/seed.ts",
-    "worker": "tsx --env-file=.env scripts/worker.ts",
+    "db:seed": "prisma generate && tsx --env-file=.env prisma/seed.ts",
+    "worker": "prisma generate && tsx --env-file=.env scripts/worker.ts",
     "reconcile": "tsx --env-file=.env scripts/reconcile.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "predev": "prisma generate"
   },
   "prisma": {
     "seed": "tsx --env-file=.env prisma/seed.ts"
