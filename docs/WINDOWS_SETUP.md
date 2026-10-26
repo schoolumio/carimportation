@@ -63,3 +63,22 @@ npm run db:seed
 - `P1001: Can't reach database server` — check the PostgreSQL Windows service is running (`services.msc`) and `DATABASE_URL` in `.env`.
 - `Invalid environment configuration` — `DATA_ENCRYPTION_KEY` must be exactly 64 hex characters; `APP_SECRET` at least 32 characters.
 - Port in use — `set PORT=3001 && npm run dev`.
+
+### `npm error Exit handler never called!`
+This is a bug inside npm itself (not this project), usually triggered on Windows by a corrupted npm cache, a dropped network connection, antivirus locking files, or very long folder paths. Fix:
+```bat
+:: 1. Move the project to a short path (deep "Downloads\...\..." paths can exceed Windows' 260-character limit inside node_modules)
+mkdir C:\dev
+move "%USERPROFILE%\Downloads\carimportation-claude-dazzling-dijkstra-jb8w7e\carimportation-claude-dazzling-dijkstra-jb8w7e" C:\dev\carimportation
+cd C:\dev\carimportation
+
+:: 2. Clear the cache and any partial install
+npm cache clean --force
+rmdir /s /q node_modules
+
+:: 3. Install exactly what the lockfile specifies
+npm ci
+```
+If it still fails: check `node -v` is 20.x or 22.x LTS, update npm with `npm install -g npm@10`, temporarily pause antivirus real-time scanning for `C:\dev`, and retry. The last lines of the log file named in the error show the real cause.
+
+The `npm warn deprecated eslint@9...` message is only a warning and can be ignored.
