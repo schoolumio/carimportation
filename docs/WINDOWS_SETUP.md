@@ -89,3 +89,14 @@ Some npm versions on Windows compute optional WebAssembly fallback packages (`@e
 npm install
 ```
 (`npm install` updates `package-lock.json` locally; `npm ci` refuses to.) The install runs `prisma generate` automatically afterwards. If your npm version reports that install scripts were skipped, run `npm install-scripts approve prisma @prisma/engines @prisma/client esbuild unrs-resolver` and then `npx prisma generate`.
+
+### `P3018 ... type "PaymentMethod" already exists` (shared or hosted database, e.g. Neon)
+The database already contains another application's tables. Give AutoVault its own space instead of mixing them:
+- **Separate schema** (simplest): add `&schema=autovault` to the end of `DATABASE_URL` (use `?schema=autovault` if the URL has no `?`), or
+- **Separate database**: create a new database (e.g. `autovault`) in your provider's console and use its connection string.
+
+The failed attempt is rolled back, but it leaves one row in that database's existing `_prisma_migrations` table (`20261026000000_init`, unfinished), which belongs to the other application. Remove it in the provider's SQL editor so the other application's own migrations are not blocked:
+```sql
+DELETE FROM "_prisma_migrations" WHERE migration_name = '20261026000000_init' AND finished_at IS NULL;
+```
+For Neon, prefer the direct (non-`-pooler`) connection string when running migrations.
