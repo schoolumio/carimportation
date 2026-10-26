@@ -19,6 +19,7 @@ import { raiseDispute } from "../src/server/disputes/service";
 import { requestRelease, approveRelease } from "../src/server/settlement/settlement";
 import { createSourcingRequest, submitOffer } from "../src/server/sourcing/service";
 import { setConfig } from "../src/server/admin/config";
+import { env } from "../src/config/env";
 
 export const DEMO_PASSWORD = "Demo-pass-2026";
 const DAY = 86400_000;
@@ -41,6 +42,7 @@ async function user(email: string, fullName: string, roles: RoleKey[], extra: { 
 }
 
 async function main() {
+  env(); // validate secrets up front so a bad .env cannot leave a half-seeded database
   if ((await prisma.user.count()) > 0) {
     console.error("Database already contains users. Seed only runs on an empty database (run `npx prisma migrate reset` yourself on a DEVELOPMENT database if you want to start over).");
     process.exit(1);

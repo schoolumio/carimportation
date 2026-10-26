@@ -100,3 +100,14 @@ The failed attempt is rolled back, but it leaves one row in that database's exis
 DELETE FROM "_prisma_migrations" WHERE migration_name = '20261026000000_init' AND finished_at IS NULL;
 ```
 For Neon, prefer the direct (non-`-pooler`) connection string when running migrations.
+
+### Seed stopped part-way, then says "Database already contains users"
+Fix the cause first (e.g. `DATA_ENCRYPTION_KEY` must be exactly 64 characters of 0-9/a-f; generate it with the `node -e` command above). Then empty **only AutoVault's schema** in your database's SQL editor and re-run:
+```sql
+DROP SCHEMA autovault CASCADE;
+```
+```bat
+npx prisma migrate deploy
+npm run db:seed
+```
+Do not change `DATA_ENCRYPTION_KEY` after seeding real data: values encrypted with the old key become unreadable.
