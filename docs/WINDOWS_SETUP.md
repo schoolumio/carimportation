@@ -82,3 +82,10 @@ npm ci
 If it still fails: check `node -v` is 20.x or 22.x LTS, update npm with `npm install -g npm@10`, temporarily pause antivirus real-time scanning for `C:\dev`, and retry. The last lines of the log file named in the error show the real cause.
 
 The `npm warn deprecated eslint@9...` message is only a warning and can be ignored.
+
+### `npm ci` fails with `EUSAGE ... lock file's @emnapi/... does not satisfy ...`
+Some npm versions on Windows compute optional WebAssembly fallback packages (`@emnapi/*`) differently from the version that wrote `package-lock.json`. These packages are not used on Windows x64. Let npm reconcile the lockfile:
+```bat
+npm install
+```
+(`npm install` updates `package-lock.json` locally; `npm ci` refuses to.) The install runs `prisma generate` automatically afterwards. If your npm version reports that install scripts were skipped, run `npm install-scripts approve prisma @prisma/engines @prisma/client esbuild unrs-resolver` and then `npx prisma generate`.

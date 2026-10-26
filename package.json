@@ -2,11 +2,12 @@
   "name": "autovault",
   "version": "0.1.0",
   "private": true,
-  "description": "Car importation escrow marketplace (Nigeria / Lagos) — brand configurable",
+  "description": "Car importation escrow marketplace (Nigeria / Lagos) \u2014 brand configurable",
   "engines": {
     "node": ">=20.11"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
