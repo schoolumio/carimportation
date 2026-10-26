@@ -312,6 +312,7 @@ async function main() {
 main()
   .catch((e) => {
     console.error(e);
+    console.error("\nSEED INCOMPLETE: the database now holds partial demo data. Fix the error above, empty AutoVault's schema/database (see docs/WINDOWS_SETUP.md), run `npx prisma migrate deploy`, then `npm run db:seed` again.");
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());

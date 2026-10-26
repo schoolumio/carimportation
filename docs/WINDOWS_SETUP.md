@@ -111,3 +111,6 @@ npx prisma migrate deploy
 npm run db:seed
 ```
 Do not change `DATA_ENCRYPTION_KEY` after seeding real data: values encrypted with the old key become unreadable.
+
+### `P1017 Server has closed the connection` / `10054 ConnectionReset` (Neon and other hosted databases)
+The seed runs hundreds of queries in a row; connection poolers (hosts containing `-pooler`) can drop such long sessions. Use the **direct** connection string for setup and local development: remove `-pooler` from the host in `DATABASE_URL`, keep `sslmode=require&schema=autovault&connect_timeout=30`. Then empty the schema (`DROP SCHEMA autovault CASCADE;`), run `npx prisma migrate deploy` and `npm run db:seed` again. If you must use the pooled host, append `&pgbouncer=true`.
