@@ -1,7 +1,6 @@
 import type { NotificationChannel } from "@prisma/client";
 import type { DbClient } from "@/server/db";
 import { DEFAULT_TEMPLATES, render } from "./templates";
-import { enqueueJob } from "@/server/jobs/queue";
 
 export interface NotifyInput {
   userId: string;
@@ -19,15 +18,21 @@ export interface NotifyInput {
  */
 export async function notify(db: DbClient, input: NotifyInput): Promise<number> {
   const channels = input.channels ?? ["IN_APP", "EMAIL"];
+  const keys = channels.map((c) => `${input.dedupeKey}:${c}`);
+  // Two reads for all channels (template overrides + already-sent check) keep round trips low on remote databases.
+  const [overrides, existing] = await Promise.all([
+    db.notificationTemplate.findMany({ where: { key: input.templateKey, channel: { in: channels } } }),
+    db.notification.findMany({ where: { dedupeKey: { in: keys } }, select: { dedupeKey: true } }),
+  ]);
+  const done = new Set(existing.map((e) => e.dedupeKey));
   let created = 0;
   for (const channel of channels) {
     const tpl =
-      (await db.notificationTemplate.findUnique({ where: { key_channel: { key: input.templateKey, channel } } })) ??
+      overrides.find((t) => t.channel === channel) ??
       (DEFAULT_TEMPLATES[input.templateKey] ? { ...DEFAULT_TEMPLATES[input.templateKey], active: true } : null);
     if (!tpl || tpl.active === false) continue;
     const dedupeKey = `${input.dedupeKey}:${channel}`;
-    const existing = await db.notification.findUnique({ where: { dedupeKey } });
-    if (existing) continue;
+    if (done.has(dedupeKey)) continue;
     const n = await db.notification.create({
       data: {
         userId: input.userId, channel, templateKey: input.templateKey,
@@ -38,7 +43,8 @@ export async function notify(db: DbClient, input: NotifyInput): Promise<number> 
       },
     });
     if (channel !== "IN_APP") {
-      await enqueueJob(db, "notification.deliver", { notificationId: n.id }, { dedupeKey: `deliver:${n.id}` });
+      // The notification id is new, so its delivery job cannot already exist.
+      await db.job.create({ data: { type: "notification.deliver", payload: { notificationId: n.id }, dedupeKey: `deliver:${n.id}` } });
     }
     created++;
   }

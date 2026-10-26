@@ -11,7 +11,11 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 export type Tx = Prisma.TransactionClient;
 export type DbClient = PrismaClient | Tx;
 
-/** Run fn inside a serializable-safe transaction (ReadCommitted + explicit row locks where needed). */
+// Interactive transactions make sequential round trips; on a distant hosted database (high latency) a large
+// workflow step can take tens of seconds. Override with DB_TRANSACTION_TIMEOUT_MS if needed.
+const TX_TIMEOUT_MS = Number(process.env.DB_TRANSACTION_TIMEOUT_MS) || 60000;
+
+/** Run fn inside a transaction (ReadCommitted + explicit row locks where needed). */
 export function transaction<T>(fn: (tx: Tx) => Promise<T>, opts?: { timeout?: number }): Promise<T> {
-  return prisma.$transaction(fn, { timeout: opts?.timeout ?? 20000, maxWait: 10000 });
+  return prisma.$transaction(fn, { timeout: opts?.timeout ?? TX_TIMEOUT_MS, maxWait: 20000 });
 }
