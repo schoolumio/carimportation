@@ -5,6 +5,7 @@ import type { DbClient, Tx } from "@/server/db";
 import { prisma } from "@/server/db";
 import { D, type Dec, ZERO, dec, sum } from "@/lib/money";
 import { invalid } from "@/lib/errors";
+import { tbl } from "@/server/db-schema";
 
 export const ACCOUNTS = {
   safeguarded: (provider: string, ccy: string) => ({ code: `ASSET:SAFEGUARDED:${provider}:${ccy}`, name: `Funds held with ${provider} (${ccy})`, type: "ASSET" as const, currency: ccy }),
@@ -118,7 +119,7 @@ export async function trialBalance(db: DbClient = prisma) {
 /** Verify every individual transaction balances (defence in depth over the DB trigger). */
 export async function unbalancedTransactions(db: DbClient = prisma): Promise<string[]> {
   const rows = await db.$queryRaw<{ transactionId: string }[]>`
-    SELECT "transactionId" FROM "LedgerEntry"
+    SELECT "transactionId" FROM ${tbl("LedgerEntry")}
     GROUP BY "transactionId", currency
     HAVING SUM(CASE WHEN direction = 'DEBIT' THEN amount ELSE -amount END) <> 0`;
   return rows.map((r) => r.transactionId);

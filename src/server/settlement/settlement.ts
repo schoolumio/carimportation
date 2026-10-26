@@ -14,6 +14,7 @@ import { ACCOUNTS, orderHeldBalance, post } from "@/server/ledger/ledger";
 import { providerFor } from "@/server/payments/registry";
 import { CATEGORY_LABEL, type Category } from "@/server/pricing/calculator";
 import { notify } from "@/server/notifications/notify";
+import { tbl } from "@/server/db-schema";
 
 const MILESTONE_ORDER: SettlementMilestone[] = ["PURCHASE_VERIFIED", "VEHICLE_DEPARTED", "ARRIVED_NIGERIA", "BUYER_ACCEPTED"];
 
@@ -180,7 +181,7 @@ export async function requestRelease(actor: Actor, instructionId: string) {
 export async function approveRelease(actor: Actor, instructionId: string, opts: { externalRef?: string } = {}) {
   requirePermission(actor, "settlement.approve");
   return transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "SettlementInstruction" WHERE id = ${instructionId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ${tbl("SettlementInstruction")} WHERE id = ${instructionId} FOR UPDATE`;
     const ins = await tx.settlementInstruction.findUnique({ where: { id: instructionId }, include: { order: { include: { escrow: true } } } });
     if (!ins) throw notFound("Settlement instruction");
     if (ins.status !== "APPROVAL_REQUESTED") throw precondition("Settlement is not awaiting approval.");

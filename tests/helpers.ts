@@ -1,3 +1,4 @@
+import { dbSchema } from "@/server/db-schema";
 import { prisma } from "@/server/db";
 import { syncRolesAndPermissions } from "@/server/admin/bootstrap";
 import { hashPassword } from "@/server/auth/password";
@@ -24,8 +25,8 @@ class MemoryStorage implements StorageAdapter {
 
 export async function resetDb() {
   if (!/_test(\?|$)/.test(process.env.DATABASE_URL ?? "")) throw new Error("resetDb may only run against a *_test database");
-  const tables = await prisma.$queryRaw<{ tablename: string }[]>`SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'`;
-  await prisma.$executeRawUnsafe(`TRUNCATE ${tables.map((t) => `"${t.tablename}"`).join(", ")} CASCADE`);
+  const tables = await prisma.$queryRaw<{ tablename: string }[]>`SELECT tablename FROM pg_tables WHERE schemaname=${dbSchema()} AND tablename <> '_prisma_migrations'`;
+  await prisma.$executeRawUnsafe(`TRUNCATE ${tables.map((t) => `"${dbSchema()}"."${t.tablename}"`).join(", ")} CASCADE`);
   await syncRolesAndPermissions(prisma);
   resetRateLimits();
   setStorage(new MemoryStorage());

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { DbClient } from "@/server/db";
 import { prisma } from "@/server/db";
+import { tbl } from "@/server/db-schema";
 
 export async function enqueueJob(
   db: DbClient,
@@ -22,9 +23,9 @@ export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 /** Claim the next due job using FOR UPDATE SKIP LOCKED so several workers can run safely. */
 export async function claimNextJob(workerId: string) {
   const rows = await prisma.$queryRaw<{ id: string }[]>`
-    UPDATE "Job" SET status = 'RUNNING', "lockedAt" = now(), "lockedBy" = ${workerId}, attempts = attempts + 1, "updatedAt" = now()
+    UPDATE ${tbl("Job")} SET status = 'RUNNING', "lockedAt" = now(), "lockedBy" = ${workerId}, attempts = attempts + 1, "updatedAt" = now()
     WHERE id = (
-      SELECT id FROM "Job" WHERE status IN ('PENDING','FAILED') AND "runAt" <= now()
+      SELECT id FROM ${tbl("Job")} WHERE status IN ('PENDING','FAILED') AND "runAt" <= now()
       ORDER BY "runAt" ASC FOR UPDATE SKIP LOCKED LIMIT 1
     ) RETURNING id`;
   if (!rows.length) return null;

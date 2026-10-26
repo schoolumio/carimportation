@@ -10,6 +10,7 @@ import { providerFor } from "./registry";
 import { notify } from "@/server/notifications/notify";
 import { formatMoney } from "@/lib/money";
 import { applyTransition } from "@/server/orders/engine";
+import { tbl } from "@/server/db-schema";
 
 export async function refundableBalance(orderId: string, currency: string, db = prisma) {
   const held = await orderHeldBalance(db, orderId, currency);
@@ -38,7 +39,7 @@ export async function requestRefund(actor: Actor, input: { orderId: string; amou
 export async function approveRefund(actor: Actor, refundId: string, opts: { externalRef?: string } = {}) {
   requirePermission(actor, "refund.approve");
   return transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Refund" WHERE id = ${refundId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ${tbl("Refund")} WHERE id = ${refundId} FOR UPDATE`;
     const r = await tx.refund.findUnique({ where: { id: refundId }, include: { order: { include: { escrow: true } } } });
     if (!r) throw notFound("Refund");
     if (r.status !== "REQUESTED") throw precondition("Refund is not awaiting approval.");

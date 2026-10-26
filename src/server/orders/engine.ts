@@ -10,6 +10,7 @@ import { enqueueJob } from "@/server/jobs/queue";
 import { MILESTONE_TRIGGERS, STATE_LABEL, findTransition, type TransitionDef } from "./state-machine";
 import { markMilestoneReached } from "@/server/settlement/settlement";
 import { orderHeldBalance } from "@/server/ledger/ledger";
+import { tbl } from "@/server/db-schema";
 
 export interface TransitionInput {
   to: OrderState;
@@ -19,7 +20,7 @@ export interface TransitionInput {
 }
 
 async function lockOrder(tx: Tx, orderId: string): Promise<Order> {
-  const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+  const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM ${tbl("Order")} WHERE id = ${orderId} FOR UPDATE`;
   if (!rows.length) throw notFound("Order");
   return tx.order.findUniqueOrThrow({ where: { id: orderId } });
 }

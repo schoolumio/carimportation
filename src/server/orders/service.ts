@@ -15,6 +15,7 @@ import { buildSettlementPlan, createSettlementInstructions, MILESTONE_LABEL } fr
 import { createPaymentIntent } from "@/server/payments/service";
 import { env } from "@/config/env";
 import { brand } from "@/config/brand";
+import { tbl } from "@/server/db-schema";
 
 export function paymentArrangementFromEnv(): string {
   const p = env().PAYMENT_PROVIDER;
@@ -71,7 +72,7 @@ export async function acceptQuote(actor: Actor, quoteId: string, ctx: { acceptTe
     throw new DomainError("PRECONDITION_FAILED", "This quote has expired. Please request a new quote with current prices.");
   }
   return transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Quote" WHERE id = ${quoteId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ${tbl("Quote")} WHERE id = ${quoteId} FOR UPDATE`;
     const quote = await tx.quote.findUnique({ where: { id: quoteId }, include: { lineItems: true, listing: { include: { dealerOrg: true } }, sourcingOffer: true, order: true } });
     if (!quote) throw notFound("Quote");
     if (quote.buyerId && quote.buyerId !== actor.userId) throw notFound("Quote");
@@ -84,7 +85,7 @@ export async function acceptQuote(actor: Actor, quoteId: string, ctx: { acceptTe
     let vehicleLabel = "";
     let cancellation = "Before payment, either party may cancel without charge. After payment, cancellation is subject to costs irreversibly incurred.";
     if (quote.listing) {
-      const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "VehicleListing" WHERE id = ${quote.listing.id} FOR UPDATE`;
+      const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM ${tbl("VehicleListing")} WHERE id = ${quote.listing.id} FOR UPDATE`;
       void rows;
       const listing = await tx.vehicleListing.findUniqueOrThrow({ where: { id: quote.listing.id } });
       if (!isOrderable(listing)) throw precondition("This vehicle has just been reserved or is no longer available.");
